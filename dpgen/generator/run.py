@@ -42,6 +42,7 @@ from dpgen.generator.lib.vasp import write_incar_dict
 from dpgen.generator.lib.vasp import make_vasp_incar_user_dict
 from dpgen.generator.lib.vasp import incar_upper
 from dpgen.generator.lib.pwscf import make_pwscf_input
+from dpgen.generator.lib.pwdft import make_pwdft_input
 #from dpgen.generator.lib.pwscf import cvt_1frame
 from dpgen.generator.lib.pwmat import make_pwmat_input_dict
 from dpgen.generator.lib.pwmat import write_input_dict
@@ -1511,6 +1512,27 @@ def make_fp_vasp (iter_index,
     # 4, copy cvasp
     make_fp_vasp_cp_cvasp(iter_index,jdata)
 
+def make_fp_pwdft(iter_index,jdata):
+    # make config
+    fp_tasks = _make_fp_vasp_configs(iter_index, jdata)
+    if len(fp_tasks) == 0 :
+        return
+    # make pwdft input
+    iter_name = make_iter_name(iter_index)
+    work_path = os.path.join(iter_name, fp_name)
+    fp_pp_files = jdata['fp_pp_files']
+    fp_input = jdata['fp_input']
+    cwd = os.getcwd()
+    for ii in fp_tasks:
+        os.chdir(ii)
+        sys_data = dpdata.System('POSCAR')
+        ret = make_pwdft_input(sys_data, fp_pp_files, fp_input) 
+        with open('pwdft.in', 'w') as fp:
+            fp.write(ret)
+        os.chdir(cwd)
+    # link pp files
+    _link_fp_vasp_pp(iter_index, jdata)
+
 
 def make_fp_pwscf(iter_index,
                   jdata) :
@@ -1656,6 +1678,8 @@ def make_fp (iter_index,
         make_fp_cp2k(iter_index, jdata)
     elif fp_style == "pwmat" :
         make_fp_pwmat(iter_index, jdata)
+    elif fp_style == "pwdft" :
+        make_fp_pwdft(iter_index, jdata)
     else :
         raise RuntimeError ("unsupported fp style")
 
@@ -1681,6 +1705,17 @@ def _qe_check_fin(ii) :
         return False
     return True
 
+def _pwdft_check_fin(ii) :
+    return True
+    if os.path.isfile(os.path.join(ii, 'statfile.0')) :
+        with open(os.path.join(ii, 'statfile.0'), 'r') as fp :
+            content = fp.read()
+            count = content.count('Job done')
+            if count != 1 :
+                return False
+    else :
+        return False
+    return True
 
 def _siesta_check_fin(ii) :
     if os.path.isfile(os.path.join(ii, 'output')) :
@@ -1791,6 +1826,10 @@ def run_fp (iter_index,
         forward_files = ['input'] + fp_pp_files
         backward_files = ['output']
         run_fp_inner(iter_index, jdata, mdata,  forward_files, backward_files, _qe_check_fin, log_file = 'output')
+    elif fp_style == "pwdft" :
+        forward_files = ['pwdft.in'] + fp_pp_files
+        backward_files = ['statfile.0']
+        run_fp_inner(iter_index, jdata, mdata,  forward_files, backward_files, _pwdft_check_fin, log_file = 'output')
     elif fp_style == "siesta":
         forward_files = ['input'] + fp_pp_files
         backward_files = ['output']
@@ -1918,6 +1957,49 @@ def post_fp_vasp (iter_index,
 
     if rfail>ratio_failed:
        raise RuntimeError("find too many unsuccessfully terminated jobs")
+
+def post_fp_pwdft (iter_index,jdata):
+    model_devi_jobs = jdata['model_devi_jobs']
+
+    assert (iter_index < len(model_devi_jobs))
+
+    iter_name = make_iter_name(iter_index)
+    work_path = os.path.join(iter_name, fp_name)
+    fp_tasks = glob.glob(os.path.join(work_path, 'task.*'))
+    fp_tasks.sort()
+    if len(fp_tasks) == 0 :
+        return
+
+    system_index = []
+    for ii in fp_tasks :
+        system_index.append(os.path.basename(ii).split('.')[1])
+    system_index.sort()
+    set_tmp = set(system_index)
+    system_index = list(set_tmp)
+    system_index.sort()
+
+    cwd = os.getcwd()
+    for ss in system_index :
+        sys_output = glob.glob(os.path.join(work_path, "task.%s.*/statfile.0"%ss))
+        sys_output.sort()
+
+        flag=True
+        for oo in (sys_output) :
+            if flag:
+                _sys = dpdata.LabeledSystem(oo, fmt = 'pwdft/hydrid')
+                if len(_sys)>0:
+                   all_sys=_sys
+                   flag=False
+                else:
+                   pass
+            else:
+                _sys = dpdata.LabeledSystem(oo, fmt = 'pwdft/hydrid')
+                if len(_sys)>0:
+                   all_sys.append(_sys)
+
+        sys_data_path = os.path.join(work_path, 'data.%s'%ss)
+        all_sys.to_deepmd_raw(sys_data_path)
+        all_sys.to_deepmd_npy(sys_data_path, set_size = len(sys_output))
 
 
 def post_fp_pwscf (iter_index,
@@ -2154,6 +2236,8 @@ def post_fp (iter_index,
         post_fp_vasp(iter_index, jdata)
     elif fp_style == "pwscf" :
         post_fp_pwscf(iter_index, jdata)
+    elif fp_style == "pwdft" :
+        post_fp_pwdft(iter_index, jdata)
     elif fp_style == "siesta":
         post_fp_siesta(iter_index, jdata)
     elif fp_style == 'gaussian' :
@@ -2197,10 +2281,6 @@ def set_version(mdata):
     mdata['deepmd_version'] = deepmd_version
     return mdata
 
-
-
-    
-
 def run_iter (param_file, machine_file) :
     try:
        import ruamel
@@ -2208,7 +2288,7 @@ def run_iter (param_file, machine_file) :
        warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
        jdata=loadfn(param_file)
        mdata=loadfn(machine_file)
-    except:
+    except ImportError:
        with open (param_file, 'r') as fp :
            jdata = json.load (fp)
        with open (machine_file, 'r') as fp:
