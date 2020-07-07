@@ -268,6 +268,52 @@ Following is an example for `PARAM`, which generates data from a typical structu
 }
 ```
 
+Another example is `from_poscar` method. Here you need to specify the POSCAR file. 
+
+```
+{
+  "stages": [
+    1,
+    2
+  ],
+  "cell_type": "fcc",
+  "from_poscar":	true,
+  "from_poscar_path":	"POSCAR",
+  "super_cell": [
+    1,
+    1,
+    1
+  ],
+  "layer_numb": 3,
+  "vacuum_max": 5,
+  "vacuum_resol": [0.5,2],
+  "mid_point": 2.0,
+  "millers": [
+    [
+      1,
+      0,
+      0
+    ]
+  ],
+  "elements": [
+    "Al"
+  ],
+  "potcars": [
+    "./POTCAR"
+  ],
+  "relax_incar" : "INCAR_metal_rlx_low",
+  "scale": [
+    1.0
+  ],
+  "skip_relax": true,
+  "pert_numb": 5,
+  "pert_box": 0.03,
+  "pert_atom": 0.01,
+  "coll_ndata": 5000,
+  "_comment": "that's all"
+}
+```
+
 The following table gives explicit descriptions on keys in `PARAM`.
 
 The bold notation of key (such as **Elements**) means that it's a necessary key.
@@ -281,6 +327,7 @@ The bold notation of key (such as **Elements**) means that it's a necessary key.
 | **layer_numb** | Integer | 3 | Number of equavilent layers of slab.
 | **z__min** | Float | 9.0 | Thickness of slab without vacuum (Angstrom). If the `layer_numb` and `z_min` are all setted, the `z_min` value will be ignored.
 | **vacuum_max** | Float | 9 | Maximal thickness of vacuum (Angstrom).
+| vacuum_min | Float | 3.0 | Minimal thickness of vacuum (Angstrom). Default value is 2 times atomic radius.
 | **vacuum_resol** | List of float | [0.5, 1 ] | Interval of thichness of vacuum. If size of `vacuum_resol` is 1, the interval is fixed to its value. If size of `vacuum_resol` is 2, the interval is `vacuum_resol[0]` before `mid_point`, otherwise `vacuum_resol[1]` after `mid_point`.
 | **millers** | List of list of Integer | [[1,0,0]] | Miller indices.
 | relax_incar | String | "....../INCAR" | Path of INCAR for relaxation in VASP. **Necessary** if `stages` include 1.
@@ -483,6 +530,7 @@ The bold notation of key (such aas **type_map**) means that it's a necessary key
 | **model_devi_e_trust_hi**  | Float | 1e10                                                         | Upper bound of energies for the selection. |
 | **model_devi_clean_traj**  | Boolean | true                                                         | Deciding whether to clean traj folders in MD since they are too large. |
 | **model_devi_nopbc**  | Boolean | False                                                         | Assume open boundary condition in MD simulations. |
+| model_devi_activation_func | List of String | ["tanh", "tanh", "tanh", "tanh"]	| Set activation functions for models, length of the list should be the same as `numb_models` |
 | **model_devi_jobs**        | [<br/>{<br/>"sys_idx": [0], <br/>"temps": <br/>[100],<br/>"press":<br/>[1],<br/>"trj_freq":<br/>10,<br/>"nsteps":<br/> 1000,<br/> "ensembles": <br/> "nvt" <br />},<br />...<br />] | List of dict | Settings for exploration in `01.model_devi`. Each dict in the list corresponds to one iteration. The index of `model_devi_jobs` exactly accord with index of iterations |
 | **model_devi_jobs["sys_idx"]**    | List of integer           | [0]                                                          | Systems to be selected as the initial structure of MD and be explored. The index corresponds exactly to the `sys_configs`. |
 | **model_devi_jobs["temps"]**  | List of integer | [50, 300] | Temperature (**K**) in MD
@@ -499,6 +547,7 @@ The bold notation of key (such aas **type_map**) means that it's a necessary key
 | **fp_task_min**     | Integer        | 5                                                            | Minimum of structures to calculate in `02.fp` of each iteration. |
 | fp_accurate_threshold      | Float | 0.9999  | If the accurate ratio is larger than this number, no fp calculation will be performed, i.e. fp_task_max = 0. |
 | fp_accurate_soft_threshold | Float | 0.9999  | If the accurate ratio is between this number and `fp_accurate_threshold`, the fp_task_max linearly decays to zero. |
+| fp_cluster_vacuum      | Float | None  | If the vacuum size is smaller than this value, this cluster will not be choosen for labeling |
 | *fp_style == VASP*
 | **fp_pp_path**   | String           | "/sharedext4/.../ch4/"                                       | Directory of psuedo-potential file to be used for 02.fp exists. |
 | **fp_pp_files**    | List of string         | ["POTCAR"]                                                   | Psuedo-potential file to be used for 02.fp. Note that the order of elements should correspond to the order in `type_map`. |

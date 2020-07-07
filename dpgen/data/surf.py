@@ -1,5 +1,6 @@
 #!/usr/bin/env python3 
 
+import time
 import os,json,shutil,re,glob,argparse
 import numpy as np
 import subprocess as sp
@@ -9,16 +10,17 @@ import dpgen.data.tools.diamond as diamond
 import dpgen.data.tools.sc as sc
 import dpgen.data.tools.bcc as bcc
 from dpgen import dlog
-import time
 from dpgen import ROOT_PATH
 from dpgen.remote.decide_machine import  decide_fp_machine
-from pymatgen.core.surface import SlabGenerator,generate_all_slabs, Structure
-from pymatgen.io.vasp import Poscar
 from dpgen.dispatcher.Dispatcher import Dispatcher, make_dispatcher
-#-----ASE-------
+#-----PMG---------
+from pymatgen.io.vasp import Poscar
+from pymatgen import Structure,Element
 from pymatgen.io.ase import AseAtomsAdaptor
+#-----ASE-------
 from ase.io import read
 from ase.build import general_surface
+
 
 def create_path (path) :
     path += '/'
@@ -176,7 +178,7 @@ def poscar_scale (poscar_in, poscar_out, scale) :
     with open(poscar_out, 'w') as fout:
         fout.write("".join(lines))
 
-def poscar_elong (poscar_in, poscar_out, elong) :
+def poscar_elong (poscar_in, poscar_out, elong, shift_center=True) :
     with open(poscar_in, 'r') as fin :
         lines = list(fin)
     if lines[7][0].upper() != 'C' :
@@ -187,8 +189,18 @@ def poscar_elong (poscar_in, poscar_out, elong) :
     elong_ratio = elong / boxzl
     boxz = boxz * (1. + elong_ratio)
     lines[4] = '%.16e %.16e %.16e\n' % (boxz[0],boxz[1],boxz[2])
-    with open(poscar_out, 'w') as fout:
-        fout.write("".join(lines))
+    if shift_center:
+       poscar_str="".join(lines)
+       st=Structure.from_str(poscar_str,fmt='poscar')
+       cart_coords=st.cart_coords
+       z_mean=cart_coords[:,2].mean()
+       z_shift=st.lattice.c/2-z_mean
+       cart_coords[:,2]=cart_coords[:,2]+z_shift
+       nst=Structure(st.lattice,st.species,coords=cart_coords,coords_are_cartesian=True)
+       nst.to('poscar',poscar_out)
+    else:
+       with open(poscar_out, 'w') as fout:
+            fout.write("".join(lines))
 
 def make_unit_cell (jdata) :
 
@@ -215,6 +227,12 @@ def make_super_cell_pymatgen (jdata) :
     make_unit_cell(jdata)
     out_dir = jdata['out_dir']
     path_uc = os.path.join(out_dir, global_dirname_02)
+    
+    elements=[Element(ii) for ii in jdata['elements']]
+    if 'vacuum_min' in jdata:
+        vacuum_min=jdata['vacuum_min']
+    else:
+        vacuum_min=max([float(ii.atomic_radius) for ii in elements])
 
     from_poscar= jdata.get('from_poscar',False)
 
@@ -256,11 +274,11 @@ def make_super_cell_pymatgen (jdata) :
         os.chdir(path_cur_surf)
         #slabgen = SlabGenerator(ss, miller, z_min, 1e-3)
         if user_layer_numb:
-           slab=general_surface.surface(ss,indices=miller,vacuum=1e-3,layers=user_layer_numb)
+            slab=general_surface.surface(ss,indices=miller,vacuum=vacuum_min,layers=user_layer_numb)
         else:
            # build slab according to z_min value   
            for layer_numb in range( 1,max_layer_numb+1):
-               slab=general_surface.surface(ss,indices=miller,vacuum=1e-3,layers=layer_numb)
+               slab=general_surface.surface(ss,indices=miller,vacuum=vacuum_min,layers=layer_numb)
                if slab.cell.lengths()[-1] >= z_min:
                   break
                if layer_numb == max_layer_numb:
@@ -520,11 +538,11 @@ def _vasp_check_fin (ii) :
         return False
     return True
 
-def run_vasp_relax(jdata, mdata, dispatcher):
+def run_vasp_relax(jdata, mdata):
     fp_command = mdata['fp_command']
     fp_group_size = mdata['fp_group_size']
     fp_resources = mdata['fp_resources']
-    machine_type = mdata['fp_machine']['machine_type']
+    # machine_type = mdata['fp_machine']['machine_type']
     work_dir = os.path.join(jdata['out_dir'], global_dirname_02)
     
     forward_files = ["POSCAR", "INCAR", "POTCAR"]
@@ -547,6 +565,7 @@ def run_vasp_relax(jdata, mdata, dispatcher):
     run_tasks = [ii.replace(work_dir+"/", "") for ii in relax_run_tasks]
 
     #dlog.info(run_tasks)
+    dispatcher = make_dispatcher(mdata['fp_machine'], mdata['fp_resources'], work_dir, run_tasks, fp_group_size)
     dispatcher.run_jobs(fp_resources,
                        [fp_command],
                        work_dir,
@@ -578,7 +597,7 @@ def gen_init_surf(args):
     if args.MACHINE is not None:
        # Decide a proper machine
        mdata = decide_fp_machine(mdata)
-       disp = make_dispatcher(mdata["fp_machine"])
+       # disp = make_dispatcher(mdata["fp_machine"])
 
     #stage = args.STAGE
     stage_list = [int(i) for i in jdata['stages']]
@@ -589,7 +608,7 @@ def gen_init_surf(args):
             place_element(jdata)
             make_vasp_relax(jdata)
             if args.MACHINE is not None:
-               run_vasp_relax(jdata, mdata, disp)
+               run_vasp_relax(jdata, mdata)
         elif stage == 2 :
             make_scale(jdata)
             pert_scaled(jdata)
